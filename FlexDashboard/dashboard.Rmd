@@ -1,0 +1,147 @@
+---
+title: "Academatica Dashboard"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: fill
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(formattable)
+library(lubridate)
+library(wordcloud)
+library(tm)
+library(DT)
+```
+```{r datasets}
+videos <- read_csv("data/academatica_videos.csv")
+metadata <- read_csv("data/academatica_videos_metadata.csv")
+stats <- read_csv("data/academatica_video_stats.csv")
+```
+```{r metricas}
+metricas <-
+  stats %>%
+  summarise(total_views = sum(viewCount),
+            total_likes = sum(likeCount),
+            total_dislikes = sum(dislikeCount),
+            total_favorite = sum(favoriteCount),
+            total_comment = sum(commentCount))
+```
+
+# Metricas {data-icon=fa-ruler}
+##
+### Reproducciones
+```{r}
+#Formateamos las cifras para que no se vea .0000 etc y agregamos comas para separar los miles.
+valueBox(metricas$total_views %>% formattable::comma(digits = 0),
+         icon = "fa-eye",
+         color = "info")
+```
+
+### Likes
+```{r}
+valueBox(metricas$total_likes %>% formattable::comma(digits = 0),
+         icon = "fa-thumbs-up",
+         color = "success")
+```
+
+### Comentarios
+```{r}
+valueBox(metricas$total_comment %>% formattable::comma(digits = 0),
+         icon = "fa-comments",
+         color = "warning")
+```
+
+##
+### Likes rate
+
+```{r}
+like_rate = metricas$total_likes/(metricas$total_likes+metricas$total_dislikes)
+like_rate = round(like_rate*100,0)
+
+gauge(like_rate, min=0, max=100, symbol = '%',
+      gaugeSectors(success = c(80,100),
+                   warning = c(40,79),
+                   danger = c(0, 39)))
+```
+
+### Dislike rate
+
+```{r}
+dislike_rate = metricas$total_dislikes/(metricas$total_likes+metricas$total_dislikes)
+dislike_rate = round(dislike_rate*100,0)
+gauge(dislike_rate, min=0, max=100, symbol = '%',
+      gaugeSectors(success = c(0,39),
+                  warning = c(40,79),
+                  danger = c(80,100)))
+```
+
+##
+
+### Total de videos subidos por año y mes
+
+```{r}
+videos %>%
+  mutate(year = year(ymd_hms(contentDetails.videoPublishedAt)),
+        month = month(ymd_hms(contentDetails.videoPublishedAt)),
+        year = as.factor(year)) %>%
+  group_by(year,month) %>%
+  summarise(upload_videos = n_distinct(contentDetails.videoId)) %>%
+  ggplot(aes(x=month, y= upload_videos, fill=year)) +
+  geom_col(position='dodge')
+```
+
+# Data {data-icon=fa-database}
+
+## {.tabset}
+
+### wordcloud
+
+```{r}
+docs <- Corpus(VectorSource(metadata$title))
+toSpace <- content_transformer(function (x , pattern ) gsub(pattern, " ", x))
+docs <- tm_map(docs, toSpace, "-")
+docs <- tm_map(docs, toSpace, "\\(")
+docs <- tm_map(docs, toSpace, "\\)")
+docs <- tm_map(docs, toSpace, "\\|")
+docs <- tm_map(docs, content_transformer(tolower))
+docs <- tm_map(docs, removeNumbers)
+docs <- tm_map(docs, removeWords, stopwords("spanish"))
+docs <- tm_map(docs, content_transformer(tolower))
+docs <- tm_map(docs, removeNumbers)
+docs <- tm_map(docs, removeWords, stopwords("english"))
+docs <- tm_map(docs, removeWords, c("video", 
+                                    "problema",
+                                    "ejemplo",
+                                    "parte",
+                                    "ejercicio",
+                                    "ejercicios",
+                                    "ejemplos")) 
+docs <- tm_map(docs, removePunctuation)
+docs <- tm_map(docs, stripWhitespace)
+dtm <- TermDocumentMatrix(docs)
+m <- as.matrix(dtm)
+v <- sort(rowSums(m),decreasing=TRUE)
+d <- data.frame(word = names(v),freq=v)
+set.seed(1234)
+wordcloud(words = d$word, freq = d$freq, min.freq = 1,
+          max.words=100, random.order=TRUE, rot.per=0.1, 
+          colors=brewer.pal(8, "Dark2"))
+```
+
+
+### tabla
+
+```{r}
+stats %>%
+  mutate(has_like = if_else(likeCount>0,TRUE,FALSE)) %>%
+  filter(has_like) %>%
+  left_join(metadata, by=c("id"="video_id")) %>%
+  select(id,title) %>%
+  datatable()
+```
+
